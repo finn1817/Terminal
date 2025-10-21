@@ -29,6 +29,8 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  /* Ensure terminal content sits above background canvas */
+  z-index: 2;
 }
 
 #terminal-header {
@@ -182,8 +184,10 @@ a:hover {
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: -1;
+  /* Place canvas above body background but below terminal UI */
+  z-index: 1;
   display: none;
+  pointer-events: none; /* Don't block clicks/typing */
 }
 
 .ascii-art {
