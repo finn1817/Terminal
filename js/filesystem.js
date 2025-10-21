@@ -53,6 +53,45 @@ let directoryStructure = {
   }
 };
 
+// Normalize and resolve paths to an absolute form starting from '~'
+function normalizePath(pathStr) {
+  if (!pathStr) return "~";
+  // Treat leading '/' as root '~'
+  if (pathStr.startsWith("/")) {
+    pathStr = "~" + pathStr;
+  }
+  // Ensure it starts with '~' for our virtual FS
+  if (!pathStr.startsWith("~")) {
+    pathStr = "~/" + pathStr;
+  }
+  // Replace multiple slashes globally
+  pathStr = pathStr.replace(/\/+/, "/").replace(/\/+/, "/");
+  // Split and handle '.' and '..'
+  const parts = pathStr.replace(/^~\/?/, "").split("/");
+  const stack = [];
+  for (const p of parts) {
+    if (p === "" || p === ".") continue;
+    if (p === "..") {
+      if (stack.length > 0) stack.pop();
+    } else {
+      stack.push(p);
+    }
+  }
+  return stack.length ? `~/${stack.join("/")}` : "~";
+}
+
+function resolveToAbsolute(inputPath) {
+  // inputPath can be absolute (starting with '~' or '/') or relative
+  if (!inputPath) return currentDir;
+  if (inputPath.startsWith("~") || inputPath.startsWith("/")) {
+    return normalizePath(inputPath);
+  }
+  // Relative to currentDir
+  const base = currentDir;
+  const combined = base === "~" ? `~/${inputPath}` : `${base}/${inputPath}`;
+  return normalizePath(combined);
+}
+
 function getCurrentPath() {
   if (currentDir === "~") {
     return directoryStructure["~"];
@@ -62,38 +101,29 @@ function getCurrentPath() {
 }
 
 function navigatePath(path) {
-  if (path === "~") {
+  if (!path) return null;
+  const abs = resolveToAbsolute(path);
+  if (abs === "~") {
     return directoryStructure["~"];
   }
-  
-  const parts = path.replace(/^~\//, "").split("/").filter(Boolean);
+  const parts = abs.replace(/^~\//, "").split("/").filter(Boolean);
   let current = directoryStructure["~"];
-  
   for (const part of parts) {
-    if (part === "..") {
-      continue;
-    }
-    
     if (!current.content || !current.content[part]) {
       return null;
     }
-    
     current = current.content[part];
   }
-  
   return current;
 }
 
 function listDirectory(dirPath, output) {
-  let currentPath = getCurrentPath();
-  let targetDir = currentPath;
-  
-  if (dirPath) {
-    if (dirPath.startsWith("/")) {
-      targetDir = navigatePath(dirPath);
-    } else {
-      targetDir = navigatePath(currentPath + "/" + dirPath);
-    }
+  let targetDir;
+  if (!dirPath) {
+    targetDir = getCurrentPath();
+  } else {
+    const absPath = resolveToAbsolute(dirPath);
+    targetDir = navigatePath(absPath);
   }
   
   if (!targetDir) {
@@ -138,26 +168,7 @@ function changeDirectory(dirPath, output) {
     return;
   }
   
-  let newPath;
-  if (dirPath === "..") {
-    const parts = currentDir.split("/");
-    if (parts.length <= 1) {
-      newPath = "~";
-    } else {
-      parts.pop();
-      newPath = parts.join("/");
-    }
-  } else if (dirPath.startsWith("/")) {
-    newPath = dirPath;
-  } else {
-    newPath = currentDir === "~" ? "~/" + dirPath : currentDir + "/" + dirPath;
-  }
-  
-  newPath = newPath.replace(/\/+/g, "/");
-  if (newPath.endsWith("/") && newPath !== "/") {
-    newPath = newPath.slice(0, -1);
-  }
-  
+  const newPath = resolveToAbsolute(dirPath);
   const targetDir = navigatePath(newPath);
   if (!targetDir) {
     output.innerHTML += `\nDirectory not found: ${dirPath}`;
@@ -179,18 +190,22 @@ function viewFile(filePath, output) {
     return;
   }
   
-  let currentPath = getCurrentPath();
-  let targetFile;
+  const absPath = resolveToAbsolute(filePath);
+  let targetFile = navigatePath(absPath);
   
-  if (filePath.startsWith("/") || filePath.startsWith("~")) {
-    targetFile = navigatePath(filePath);
-  } else {
-    // Handle relative paths from current directory
-    if (currentDir === "~") {
-      targetFile = currentPath.content && currentPath.content[filePath] ? currentPath.content[filePath] : null;
-    } else {
-      const fullPath = currentDir + "/" + filePath;
-      targetFile = navigatePath(fullPath);
+  // Fallback: if not found, try current directory direct lookup (handles edge joins)
+  if (!targetFile) {
+    const dirObj = getCurrentPath();
+    if (dirObj && dirObj.content) {
+      // Exact match first
+      if (dirObj.content[filePath]) {
+        targetFile = dirObj.content[filePath];
+      } else {
+        // Case-insensitive lookup
+        const lower = filePath.toLowerCase();
+        const matchKey = Object.keys(dirObj.content).find(k => k.toLowerCase() === lower);
+        if (matchKey) targetFile = dirObj.content[matchKey];
+      }
     }
   }
   
